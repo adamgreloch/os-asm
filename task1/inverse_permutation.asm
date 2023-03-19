@@ -17,15 +17,12 @@ inverse_permutation:
         ja      .ret_false              ; jeśli n > INT_MAX + 1, zwróć false
 
 ; *****************************************************************************
-; Sprawdzanie poprawności tablicy p
-; Inkrementuje całą tablicę o 1. Następnie sprawdza, czy tablica p jest
-; permutacją liczb 1..n.
+; Inkrementacja całej tablicy o 1
 ; *****************************************************************************
         mov     rcx,rdi                 ; zapisz n w rcx jako obecny licznik pętli
         mov     eax,1
-
 .inc:
-; ::::: Pętla inkrementująca liczby w p z licznikiem w rcx
+        ; Pętla inkrementująca liczby w p z licznikiem w rcx
         cmp     dword [rsi+4*rcx-4],edi
         jae     .undo_inc_bad           ; jeśli p[i] >= n, to p nie jest permutacją
         cmp     dword [rsi+4*rcx-4],0
@@ -33,30 +30,53 @@ inverse_permutation:
         inc     dword [rsi+4*rcx-4]     ; wykonaj p[i]++
         loop    .inc
 
-        mov     rcx,rdi                 ; zapisz n-1 w rcx jako obecny licznik pętli
+        mov     r9,2                    ; r9 -> flaga dla pętli .check_dups
+
+; *****************************************************************************
+; Sprawdzenie poprawności tablicy p
+;
+; Poniższe instrukcje sprawdzają, czy p zawiera permutację liczb od 1 do n.
+; Zawartość tablicy po wykonaniu instrukcji ma być taka, jak przed wykonaniem.
+; Wynik sprawdzenia zawarty jest w buforze eax.
+; 
+; Flaga w buforze r9: 
+;       Jeśli r9 = 1, to poniższa pętla wprowadza zmiany do tablicy
+;       Jeśli r9 = 0, to odwraca wprowadzone przez siebie zmiany 
+; *****************************************************************************
+.dups_loop:
+        dec     r9                      ; r9 = 0
+        mov     rcx,rdi                 ; zapisz n w rcx jako obecny licznik pętli
 .check_dups:
-; ::::: Pętla sprawdzająca, czy w p istnieją duplikaty
-        mov     edx,dword [rsi+4*rcx-4] ; rdx ma pełnić rolę indeksu j := p[i]
+        mov     edx,dword [rsi+4*rcx-4] ; edx ma pełnić rolę indeksu j := p[i]
         cmp     edx,0
-        jg      .dups_invert            ; jeśli rdx > 0, odwróć p[j-1]
-        jmp     .dups_neg_invert        ; jeśli rdx < 0, zmień znak j, odwróć p[j-1]
-.check_dups_ctd:
+        jg      .skip_neg               ; jeśli j > 0, przeskocz zmianę znaku
+        neg     edx                     ; w.p.p. j := -j
+.skip_neg:
+        cmp     r9,0
+        je      .dups_undo              ; jeśli r9 = 0, wycofuj zmiany
+.dups_do:
+        cmp     dword [rsi+4*rdx-4],0
+        jl      .dups_is_bad            ; jeśli p[j] < 0, to znaleziono duplikat
+        jmp     .dups_neg               ; w.p.p. kontynuuj
+.dups_undo:
+        cmp     dword [rsi+4*rdx-4],0
+        jg      .check_dups_ctd         ; jeśli p[j] > 0, to nie ruszaj
+.dups_neg:
+        neg     dword [rsi+4*rdx-4]
         loop    .check_dups
 
-        mov     rcx,rdi                 ; zapisz n w rcx jako obecny licznik pętli
-.undo_dups:
-; ::::: Pętla cofająca modyfikacje w znakach wprowadzone podczas .check_dups
-        mov     edx,dword [rsi+4*rcx-4] ; rdx ma pełnić rolę indeksu j := p[i]
-        cmp     edx,0
-        jg      .dups_revert            ; jeśli rdx > 0, odwróć p[j-1]
-        jmp     .dups_neg_revert        ; jeśli rdx < 0, zmień znak j, odwróć p[j-1]
-.undo_dups_ctd:
-        loop    .undo_dups
+        cmp     r9,0
+        jg      .dups_loop               ; jeśli r9 > 0, to kontynuuj pętlę
+
         cmp     eax,0
-        je      .undo_inc_full          ; jeśli znaleziono duplikaty, sprzątaj
+        je      .undo_inc_full
+        ; Jeśli eax = 0, to znaleziono duplikaty, więc wejściowa tablica jest
+        ; niepoprawna, należy wycofać wszelkie zmiany za pomocą instrukcji pod
+        ; etykietą .undo_inc_full i zwrócić z eax = 0.
 
 ; *****************************************************************************
 ; Procedura odwracania permutacji (algorytm Huanga, Knuth I, str. 182)
+;
 ; Zakłada, że tablica p wskazuje poprawną permutację n liczb od 1 do n, oraz,
 ; że n jest liczbą z zakresu 1..2^31+1.
 ; *****************************************************************************
@@ -70,7 +90,7 @@ inverse_permutation:
 .huang_next:
         mov     edx,dword [rsi+4*rcx-4] ; edx -> i := p[m-1]
         cmp     edx,0
-        jl      .huang_cycle_end        ; jesli i < 0, przeskocz do końca cyklu
+        jl      .huang_cycle_end        ; jeśli i < 0, przeskocz do końca cyklu
 .huang_invert:
         mov     dword [rsi+4*rcx-4],ebx ; p[m-1] := j
         mov     ebx,ecx                 ; (1/2) j := -m
@@ -80,43 +100,30 @@ inverse_permutation:
         mov     edx,dword [rsi+4*rcx-4] ; i := p[m-1]
 .huang_is_end:
         cmp     edx,0
-        jg      .huang_invert           ; jesli i > 0, wróć do invert
+        jg      .huang_invert           ; jeśli i > 0, wróć do invert
         mov     edx,ebx                 ; w.p.p. i := j
 .huang_cycle_end:
         mov     dword [rsi+4*rcx-4],edx ; (1/2) p[m-1] := -i
         neg     dword [rsi+4*rcx-4]     ; (2/2)
         loop    .huang_next
 
-        jmp     .undo_inc_full
+.undo_inc_full: ; Wycofuje przesunięcie o 1 na całej tabeli
+        mov     rcx,rdi                 ; ustaw rcx na i
+.undo_inc_loop:
+        dec     dword [rsi+4*rcx-4]     ; wykonaj p[i]--
+        loop    .undo_inc_loop          ; jeśli i < n-1, kontynuuj pętlę
+        ret
 
 ; *****************************************************************************
 ; Fragmenty poza normalnym biegiem instrukcji
 ; *****************************************************************************
  
-; ::::: INVERT
-.dups_neg_invert:                       ; odwrócenie, gdy rdx jest ujemne
-        neg     edx
-.dups_invert:                           ; odwrócenie, gdy rdx jest dodatnie
-        cmp     dword [rsi+4*rdx-4],0
-        jl      .dups_is_bad
-        neg     dword [rsi+4*rdx-4]
-        jmp     .check_dups_ctd
-
-; ::::: REVERT
-.dups_neg_revert:                       ; odwrócenie, gdy rdx jest ujemne
-        neg     edx
-.dups_revert:                           ; odwrócenie, gdy rdx jest dodatnie
-        cmp     dword [rsi+4*rdx-4],0
-        jg      .undo_dups_ctd
-        neg     dword [rsi+4*rdx-4]
-        jmp     .undo_dups_ctd
-
-; ::::: Zaznacz niepoprawność zawartości tablicy
+; Zasygnalizuj niepoprawność zawartości tablicy
 .dups_is_bad:
         xor     eax,eax
         jmp     .check_dups_ctd
 
-; ::::: Wycofaj zmiany wprowadzone przez pętlę .inc
+; Wycofaj zmiany wprowadzone przez pętlę .inc
 .undo_inc_bad:
         xor     eax,eax
 .undo_inc:
@@ -127,14 +134,7 @@ inverse_permutation:
         jb      .undo_inc               ; jeśli i < n-1, kontynuuj pętlę
         ret
 
-; ::::: Wycofaj przesunięcie o 1 na całej tabeli
-.undo_inc_full:
-        mov     rcx,rdi                 ; ustaw rcx na i
-.undo_inc_loop:
-        dec     dword [rsi+4*rcx-4] ; wykonaj p[i]--
-        loop    .undo_inc_loop          ; jeśli i < n-1, kontynuuj pętlę
-        ret
-
 .ret_false:
         xor     eax,eax
         ret
+
