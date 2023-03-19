@@ -49,9 +49,9 @@ inverse_permutation:
 .check_dups:
         mov     edx,dword [rsi+4*rcx-4] ; edx ma pełnić rolę indeksu j := p[i]
         cmp     edx,0
-        jg      .skip_neg               ; jeśli j > 0, przeskocz zmianę znaku
+        jg      .skip_edx_neg           ; jeśli j > 0, przeskocz zmianę znaku
         neg     edx                     ; w.p.p. j := -j
-.skip_neg:
+.skip_edx_neg:
         cmp     r9,0
         je      .dups_undo              ; jeśli r9 = 0, wycofuj zmiany
 .dups_do:
@@ -60,9 +60,10 @@ inverse_permutation:
         jmp     .dups_neg               ; w.p.p. kontynuuj
 .dups_undo:
         cmp     dword [rsi+4*rdx-4],0
-        jg      .check_dups_ctd         ; jeśli p[j] > 0, to nie ruszaj
+        jg      .skip_p_neg             ; jeśli p[j] > 0, to nie ruszaj
 .dups_neg:
         neg     dword [rsi+4*rdx-4]
+.skip_p_neg:
         loop    .check_dups
 
         cmp     r9,0
@@ -121,7 +122,7 @@ inverse_permutation:
 ; Zasygnalizuj niepoprawność zawartości tablicy
 .dups_is_bad:
         xor     eax,eax
-        jmp     .check_dups_ctd
+        jmp     .skip_p_neg
 
 ; Wycofaj zmiany wprowadzone przez pętlę .inc
 .undo_inc_bad:
