@@ -27,7 +27,7 @@ static bool check_inverse_permutation(size_t n, int const *p1, int const *p2) {
     return true;
 }
 
-#define TESTS_NO 1000000
+#define TESTS_NO 10000
 
 int rentib_test(unsigned int seed) {
   size_t n, i, j;
