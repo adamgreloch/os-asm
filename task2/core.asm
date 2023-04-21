@@ -6,10 +6,12 @@ extern put_value
         push    rbx
         push    rdi
         push    rsi
+        push    r8
 %endmacro
 
 %macro restore_dealign 0
         add     rsp,rbx
+        pop     r8
         pop     rsi
         pop     rdi
         pop     rbx
@@ -22,23 +24,24 @@ extern put_value
 %endmacro
 
 section .bss
-prev_rsp:                       ; zmienna na wartość rsp sprzed wywołania core
-        resq    1
-s_wait:                         ; tablica rozmiaru N na cel operacji S
-        resq    N
 bufs:                           ; N buforów do wymiany wartościami między rdzeniami podczas
         resq    N               ; operacji S
 
+section .data
+s_wait:                         ; tablica rozmiaru N na cel operacji S
+        times N dq N
+
 section .text
 
-core:
 ; Argumenty funkcji core:
 ;       rdi - wartość n
 ;       rsi - wskaźnik p na napis definiujący obliczenie
+core:
+        mov     r8,rsp
 
 .read_loop:
-        mov     [rel prev_rsp],rsp
         mov     al,[rsi]        ; odczyt pierwszego znaku napisu
+
         cmp     al,'+'
         je      .op_plus
 
@@ -80,18 +83,17 @@ core:
         jmp     .op_val
 
 .end:
-        mov     rsp,[rel prev_rsp]
+        pop     rax
+        mov     rsp,r8
         ret
 
 .next_read:
-        inc     rdi
+        inc     rsi
         jmp     .read_loop
 
 .op_plus:
         pop     rax
-        pop     rdx
-        add     rax,rdx
-        push    rax
+        add     [rsp],rax
         jmp     .next_read
 
 .op_star:
@@ -102,9 +104,7 @@ core:
         jmp     .next_read
         
 .op_neg:
-        pop     rax
-        neg     rax
-        push    rax
+        neg     qword [rsp]
         jmp     .next_read
 
 .op_n:
@@ -115,13 +115,12 @@ core:
         pop     rax
         pop     rdx
         test    rdx,rdx
-        jnz     .op_B_opjump
         push    rdx
+        jnz     .op_B_opjump
         jmp     .next_read
 
 .op_B_opjump:
-        neg     rax
-        sub     rsi,rax
+        add     rsi,rax
         jmp     .next_read
 
 .op_C:
@@ -129,9 +128,7 @@ core:
         jmp     .next_read
 
 .op_D:
-        pop     rax
-        push    rax
-        push    rax
+        push    qword [rsp]
         jmp     .next_read
 
 .op_E:
@@ -140,7 +137,6 @@ core:
         push    rax
         push    rdx
         jmp     .next_read
-
 .op_G:
         backup_data
         align_stack
@@ -149,9 +145,9 @@ core:
         push    rax
         jmp     .next_read
 .op_P:
-        pop     r8              ; zdejmij wartość w
+        pop     r9              ; zdejmij wartość w
         backup_data
-        mov     rsi,r8          ; umieść w jako drugi argument funkcji put_value
+        mov     rsi,r9          ; umieść w jako drugi argument funkcji put_value
         align_stack
         call    put_value       ; w rdi już znajduje się liczba n
         restore_dealign
@@ -159,7 +155,8 @@ core:
         jmp     .next_read
 .op_val:
         sub     al,'0'
-        push    ax
+        movsx   rax,al
+        push    rax
         jmp     .next_read
 
 .op_S:
@@ -170,45 +167,25 @@ core:
 ;
 ; Rdzeń a (protokół A):
 ; 1. Zdejmij numer rdzenia m ze stosu.
-; 2. Umieść w bufs[a] wartość z wierzchołka własnego stosu.
-; 3. Skoro a < b, ustaw s_wait[a] na b i czekaj, aż s_wait[b] == a.
+; 2. Umieść w bufs[a] wartość z wierzchołka własnego stosu, ustaw s_wait[a] na b
+; 3. Czekaj, aż s_wait[b] == a.
 ; 4. Gdy s_wait[b] == a, zabierz ze bufs[b] wartość i umieść na stosie.
-; 5. Ustaw s_wait[a] = 0
+; 5. Ustaw s_wait[a] = N i czekaj, aż s_wait[b] == N
 ; 6. Zakończ operację S.
-;
-; Rdzeń a (protokół B):
-; 1. Zdejmij numer rdzenia n ze stosu.
-; 2. Umieść w bufs[b] wartość z wierzchołka stosu
-; 3. Skoro b > a, to czekaj, aż s_wait[a] == b
-; 4. Jeśli s_wait[a] == b, zabierz ze bufs[a] wartość, wstaw na swój stos.
-; 5. Ustaw s_wait[b] == a i czekaj, aż s_wait[a] == 0
-; 6. Gdy s_wait[a] == 0, ustaw s_wait[b] = 0
-; 7. Zakończ operację S.
 ;*****************************************************************************************
 
-        pop     rcx                     ; zdejmij ze stosu numer rdzenia m
-        lea     r8,[rel bufs]           ; r8 -> wskaźnik do tablicy bufs
+        pop     rdx                     ; zdejmij ze stosu numer rdzenia m
+        lea     rcx,[rel bufs]          ; rcx -> wskaźnik do tablicy bufs
         lea     r9,[rel s_wait]         ; r9 -> wskaźnik do tablicy zmiennych warunkowych
-        pop     qword [rdx + rdi]       ; przenieś do bufs[n] wartość wierzchołka stosu
-        cmp     rdi,rcx                 ; porównaj numery rdzeniów n i m
-        jg      .pr_B                   ; mając wyższy numer, wykonaj protokół B
-.pr_A:                                  ; w.p.p. wykonuj protokół A
-.pr_A_spin:
-        mov     [r9 + rdi],rcx          ; ustaw s_wait[n] := m
-        cmp     [r9 + rcx],rdi          ; czy można wykonać krok 4?
-        jne     .pr_A_spin              ; skocz, jeśli s_wait[m] != n, czyli gdy nie można
-        push    qword [r8 + rcx]        ; umieść bufs[m] na stosie
-        mov     qword [r9 + rdi],0      ; ustaw s_wait[n] := 0
-        jmp     .next_read
-.pr_B:
-.pr_B_spin1:
-        cmp     [r9 + rcx],rdi          ; czy można wykonać krok 4?
-        jne     .pr_B_spin1             ; skocz, jeśli s_wait[m] != n, czyli gdy nie można
-        push    qword [r8 + rcx]        ; umieść bufs[m] na stosie
-        mov     [r9 + rdi],rcx          ; ustaw s_wait[n] := m
-.pr_B_spin2:
-        cmp     qword [r9 + rcx],0      ; czy można wykonać krok 6?
-        jne     .pr_B_spin2             ; skocz, jeśli s_wait[m] != 0, czyli gdy nie można
-        mov     qword [r9 + rdi],0      ; ustaw s_wait[n] := 0
-        jmp     .next_read
+        pop     qword [rcx + 8*rdi]     ; przenieś do bufs[n] wartość wierzchołka stosu
+        mov     [r9 + 8*rdi],rdx        ; ustaw s_wait[n] := m
+.spin1:
+        cmp     [r9 + 8*rdx],rdi        ; sprawdź, czy s_wait[m] == n
+        jne     .spin1                  ; jeśli nie, czekaj
+        push    qword [rcx + 8*rdx]     ; jeśli tak, bufs[m] już gotowe - umieść je na stosie
+        mov     qword [r9 + 8*rdx],N    ; ustaw s_wait[m] := N
+.spin2:
+        cmp     qword [r9 + 8*rdi],N    ; sprawdź, czy s_wait[n] == N
+        jne     .spin2                  ; jeśli nie, czekaj, aż m odbierze
+        jmp     .next_read              ; jeśli tak, zakończ operację
 
