@@ -151,7 +151,6 @@ core:
         align_stack
         call    put_value       ; w rdi już znajduje się liczba n
         restore_dealign
-        push    rax
         jmp     .next_read
 .op_val:
         sub     al,'0'
@@ -163,14 +162,12 @@ core:
 ;*****************************************************************************************
 ; Operacja S
 ;
-; Protokół synchronizacji i wymiany między rdzeniami a oraz b, gdzie a < b.
-;
-; Rdzeń a (protokół A):
+; Protokół synchronizacji-wymiany między rdzeniami n i m:
 ; 1. Zdejmij numer rdzenia m ze stosu.
 ; 2. Umieść w bufs[a] wartość z wierzchołka własnego stosu, ustaw s_wait[a] na b
 ; 3. Czekaj, aż s_wait[b] == a.
 ; 4. Gdy s_wait[b] == a, zabierz ze bufs[b] wartość i umieść na stosie.
-; 5. Ustaw s_wait[a] = N i czekaj, aż s_wait[b] == N
+; 5. Ustaw s_wait[b] = N i czekaj, aż s_wait[a] == N
 ; 6. Zakończ operację S.
 ;*****************************************************************************************
 
